@@ -8,7 +8,6 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.TaskAction
 import java.io.File
-import java.nio.charset.Charset
 
 open class TokRepTask : DefaultTask() {
 
@@ -33,20 +32,22 @@ open class TokRepTask : DefaultTask() {
     @get:Internal
     val debug: Property<Boolean> = project.objects.property(Boolean::class.java)
 
+
+    private lateinit var tempPath: String
+
+    private lateinit var tempDirectory: File
+
     //-------------------------------------------------------------------------
     // Constructor(s)
 
     init {
         group = groupName
         outputs.upToDateWhen { false }
-
     }
 
     @TaskAction
     fun execute() {
         if (enabled.get()) {
-            println("Executing TokRepTask")
-
             validateProperties()
 
             if (debug.get()) printProperties()
@@ -55,57 +56,120 @@ open class TokRepTask : DefaultTask() {
         }
     }
 
+
     //-------------------------------------------------------------------------
     // Convenience function(s)
 
+    /**
+     * Holds task process logic which is applied to given source directories.
+     */
     private fun executeTask() {
-        for (fileIteration in srcDirs.get()) {
-            val file = File(fileIteration)
+        tempPath = "./token-rep-${getRandomString(23)}"
 
-            if (file.isDirectory) {
-                file.walk().forEach {
-                    replaceFile(it)
-                }
-            } else if (file.isFile) {
-                replaceFile(file)
-            } else if (file.isHidden) {
-                println("Warning: Hidden file is beeing edited")
-            } else {
-                throw TokenReplacerRuntimeException("Couldn't handle file ${file.path}")
+        for (filePath in srcDirs.get()) {
+            val file = File(filePath)
+
+            if (file.exists()) {
+                prepareTempDirectory()
+
+                copyToTempDirectory(file)
+
+                evaluateTempDirectory()
+
+                copyToTargetDirectories()
+
+                deleteTempDirectory()
             }
         }
     }
 
-    private fun replaceFile(file: File) {
-        if (file.isFile) {
-            val tokens = this.tokens.get()
-            val pattern = this.pattern.get()
+    /**
+     * Prepares temporary directory
+     */
+    private fun prepareTempDirectory() {
+        tempDirectory = File(tempPath)
 
-            val fileText = file.readText()
-            var replacedString = fileText
-
-            if (fileText.isNotEmpty() && fileText.isNotBlank()) {
-                tokens.forEach {
-                    replacedString = replacedString.replace(String.format(pattern, it.key), it.value)
-                }
-            }
-
-            addFileToTarget(file.name, replacedString)
+        if (tempDirectory.exists()) {
+            tempDirectory.deleteRecursively()
+        } else {
+            tempDirectory.mkdir()
         }
     }
 
-    private fun addFileToTarget(fileName: String, fileText: String) {
-        val targetDirectories = this.targetDirs.get();
+    /**
+     * Deletes temporary directory
+     */
+    private fun deleteTempDirectory() {
+        tempDirectory.deleteRecursively()
+    }
 
-        for (targetDirectory in targetDirectories) {
-            val target = File(targetDirectory)
+    /**
+     * Copies passed file into the temporary directory recursively.
+     */
+    private fun copyToTempDirectory(file: File) {
 
-            if (target.isDirectory) {
-                File("${target.path}/$fileName").run {
-                    writeText(fileText)
+        if (tempDirectory.exists() && file.exists()) {
+            file.copyRecursively(
+                target = tempDirectory,
+                overwrite = true
+            )
+        } else {
+            throw TokenReplacerRuntimeException(String.format("Copy to temp directory failed  " +
+                    "TempDirectory exists: ${tempDirectory.exists()}, file exists: ${file.exists()}"))
+        }
+    }
+
+    /**
+     * Evaluates the temporary directory. Iterated recursively through directory and applies token replacement logic on
+     * each file-
+     */
+    private fun evaluateTempDirectory() {
+        tempDirectory.walk(FileWalkDirection.TOP_DOWN).forEach {
+            replaceTokensInFile(it)
+        }
+    }
+
+    /**
+     * Replaces tokens in passed file.
+     *
+     */
+    private fun replaceTokensInFile(file: File) {
+        if (file.exists()) {
+            if (file.isFile) {
+                val pattern = this.pattern.get()
+                val tokens = this.tokens.get()
+
+                var currentText = file.readText()
+
+                for (token in tokens) {
+                    currentText = currentText.replace(String.format(pattern, token.key), token.value)
                 }
-            } else {
-                throw TokenReplacerRuntimeException("Target $targetDirectory isn't a directory")
+
+                file.writeText(currentText)
+            }
+        } else {
+            throw TokenReplacerRuntimeException("File does not exist.")
+        }
+    }
+
+    /**
+     * Copies the content of the temporary directory into the target directories
+     */
+    private fun copyToTargetDirectories() {
+        if (tempDirectory.exists()) {
+            val targets = this.targetDirs.get()
+
+            for (target in targets) {
+                val targetFile = File(target)
+
+                if (targetFile.exists() && targetFile.isDirectory) {
+                    tempDirectory.copyRecursively(
+                        target = targetFile,
+                        overwrite = true
+                    )
+                } else {
+                    throw TokenReplacerRuntimeException("Target $target is not a directory or does not exist")
+                }
             }
         }
     }
@@ -145,5 +209,13 @@ open class TokRepTask : DefaultTask() {
             tokens.get().size
             )
         )
+    }
+
+    private fun getRandomString(length: Int) : String {
+        val charset = ('a'..'z') + ('A'..'Z') + ('0'..'9')
+
+        return (1..length)
+            .map { charset.random() }
+            .joinToString("")
     }
 }

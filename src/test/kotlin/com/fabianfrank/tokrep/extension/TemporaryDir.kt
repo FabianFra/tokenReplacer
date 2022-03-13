@@ -18,11 +18,12 @@ class TemporaryDir : BeforeAllCallback, AfterAllCallback, ParameterResolver {
 
         File("$testTempFolder/src").mkdir()
         File("$testTempFolder/src/inSrc").mkdir()
+        File("$testTempFolder/src/inSrc/ininSrc").mkdir()
         File("$testTempFolder/target").mkdir()
     }
 
     override fun afterAll(context: ExtensionContext?) {
-        //testTempFolder.deleteRecursively()
+        testFolder.deleteRecursively()
     }
 
     override fun supportsParameter(parameterContext: ParameterContext?, extensionContext: ExtensionContext?): Boolean {
@@ -32,6 +33,4 @@ class TemporaryDir : BeforeAllCallback, AfterAllCallback, ParameterResolver {
     override fun resolveParameter(parameterContext: ParameterContext?, extensionContext: ExtensionContext?): Any {
         return testFolder
     }
-
-
 }
